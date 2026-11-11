@@ -27,7 +27,7 @@ PACKAGES = {
     "swfl_00002720.bin.007_030_001": "a9222a2432f5318f06aec563321832a3ba41fde60a4692cbb0cf34317b2f37e1",
 }
 MODULES = ("head-unit", "6wb")
-EXPECTED = {"psdzdata", "cacheDir", "display", "cpuCount", "modules"}
+EXPECTED = {"psdzdata", "cacheDir", "display", "cpuCount", "modules", "pluginApps"}
 # QEMU window backends per host. The first entry is the default; macOS uses
 # Cocoa for the head unit, Linux (including WSL2 with WSLg) uses SDL or GTK.
 DISPLAYS = ("cocoa", "none") if sys.platform == "darwin" else ("sdl", "gtk", "none")
@@ -76,6 +76,9 @@ def checked_config(project: Path, file: Path, nix: str) -> dict:
         raise ValueError(f"display must be {choices} on this host.")
     if type(config["cpuCount"]) is not int or config["cpuCount"] not in {1, 2}:
         raise ValueError("cpuCount must be the integer 1 or 2.")
+    config.setdefault("pluginApps", False)
+    if type(config["pluginApps"]) is not bool:
+        raise ValueError("pluginApps must be true or false.")
     cache = config.get("cacheDir")
     if cache is None:
         cache = os.environ.get("XDG_CACHE_HOME")
@@ -248,7 +251,8 @@ def head_unit_command(project, config, firmware):
     profile = project / "profiles/f32-x20511i-id6-light.json"
     command = [sys.executable, str(project / "tools/run-hmi-profile.py"), str(profile),
                "--set", f"IDRIVE_QEMU_CPUS={config['cpuCount']}",
-               "--set", f"IDRIVE_TCG_THREAD={environment['IDRIVE_TCG_THREAD']}"]
+               "--set", f"IDRIVE_TCG_THREAD={environment['IDRIVE_TCG_THREAD']}",
+               "--set", f"IDRIVE_HMI_CODING_REMOTE_HMI={int(config['pluginApps'])}"]
     return command, environment
 
 

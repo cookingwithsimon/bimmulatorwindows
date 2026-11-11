@@ -39,6 +39,20 @@ class LaunchConfigTests(unittest.TestCase):
             with self.subTest(modules=modules), self.assertRaisesRegex(ValueError, "modules must select"):
                 self.config(modules=modules)
 
+    def test_plugin_apps_defaults_to_off_and_must_be_boolean(self):
+        self.assertIs(self.config()["pluginApps"], False)
+        self.assertIs(self.config(pluginApps=True)["pluginApps"], True)
+        for value in (1, "true", None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "pluginApps must be"):
+                self.config(pluginApps=value)
+
+    def test_plugin_apps_selects_the_remote_hmi_coding_overlay(self):
+        head_unit_command = LAUNCHER["head_unit_command"]
+        for enabled in (False, True):
+            config = {"cacheDir": "/cache", "cpuCount": 2, "display": DISPLAYS[0], "pluginApps": enabled}
+            command, _ = head_unit_command(Path("/project"), config, Path("/firmware"))
+            self.assertIn(f"IDRIVE_HMI_CODING_REMOTE_HMI={int(enabled)}", command)
+
     def test_display_defaults_to_the_host_window_backend(self):
         expected = "cocoa" if sys.platform == "darwin" else "sdl"
         self.assertEqual(DISPLAYS[0], expected)
