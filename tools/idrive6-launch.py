@@ -28,6 +28,9 @@ PACKAGES = {
 }
 MODULES = ("head-unit", "6wb")
 EXPECTED = {"psdzdata", "cacheDir", "display", "cpuCount", "modules"}
+# QEMU window backends per host. The first entry is the default; macOS uses
+# Cocoa for the head unit, Linux (including WSL2 with WSLg) uses SDL or GTK.
+DISPLAYS = ("cocoa", "none") if sys.platform == "darwin" else ("sdl", "gtk", "none")
 RELEASE = "x20511i-007_030_001-v1"
 STAGING_SCHEMA = 2
 
@@ -66,10 +69,11 @@ def checked_config(project: Path, file: Path, nix: str) -> dict:
     if not isinstance(psdz, str) or not Path(psdz).is_absolute():
         raise ValueError("Set psdzdata to an absolute path to the extracted PSdZData directory.")
     config["psdzdata"] = str(external_path(project, Path(psdz), "psdzdata"))
-    config.setdefault("display", "cocoa")
+    config.setdefault("display", DISPLAYS[0])
     config.setdefault("cpuCount", 2)
-    if config["display"] not in {"cocoa", "none"}:
-        raise ValueError("display must be 'cocoa' or 'none'.")
+    if config["display"] not in DISPLAYS:
+        choices = ", ".join(map(repr, DISPLAYS[:-1])) + f" or {DISPLAYS[-1]!r}"
+        raise ValueError(f"display must be {choices} on this host.")
     if type(config["cpuCount"]) is not int or config["cpuCount"] not in {1, 2}:
         raise ValueError("cpuCount must be the integer 1 or 2.")
     cache = config.get("cacheDir")
@@ -268,7 +272,8 @@ def run_kombi_session(project, cache, config, images, head_unit):
     run = Path(tempfile.mkdtemp(prefix="6wb-", dir=runs))
     ram = run / "vehicle.ram"
     gss, flash_config, graphics = map(str, images)
-    display = "sdl" if config["display"] == "cocoa" else "none"
+    # The 6WB QEMU has no Cocoa window; it uses SDL unless GTK was selected.
+    display = "sdl" if config["display"] == "cocoa" else config["display"]
 
     with ExitStack() as cleanup:
         qmp = run / "qmp.sock"
