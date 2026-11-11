@@ -46,7 +46,11 @@ verified cache on later runs. By default the cache lives under
 `$XDG_CACHE_HOME/idrive6` or `~/.cache/idrive6`.
 
 The optional settings are `cacheDir`, `display` (`cocoa` or `none` on macOS;
-`sdl`, `gtk` or `none` on Linux), and `cpuCount` (`1` or `2`). Keep PSdZData and the cache outside the repository;
+`sdl`, `gtk` or `none` on Linux), `cpuCount` (`1` or `2`), and `pluginApps`
+(`true` or `false`, default `false`). `pluginApps = true` codes `REMOTE_HMI`
+active in the emulated head unit's coding defaults; without one of the
+remoting features coded, the HMI skips its remoting bundle and never loads
+plugin apps from `/opt/hmi/ID5/data/ro/Plugins`. Keep PSdZData and the cache outside the repository;
 the launcher rejects paths inside the checkout so local firmware and cache
 files never enter the Nix source or store. Both paths may contain spaces.
 The launcher reads `./idrive6.toml` by default; pass `--config /path/to/file`

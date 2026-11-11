@@ -13,3 +13,8 @@ modules = ["head-unit", "6wb"]
 
 # Optional: 2 (default) or 1 for the slower single-core compatibility mode.
 # cpuCount = 2
+
+# Optional: code REMOTE_HMI active in the emulated head unit (never in a car),
+# so the HMI starts its remoting bundle and loads plugin apps from
+# /opt/hmi/ID5/data/ro/Plugins. Default false.
+# pluginApps = true
