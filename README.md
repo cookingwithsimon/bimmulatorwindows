@@ -6,8 +6,10 @@ directory containing the verified NBTevo X20511I packages.
 
 ## Quick start
 
-The supported release host is Apple silicon macOS with Nix flakes enabled.
-Clone the repository, copy the example config, and set `psdzdata` to the
+The verified release host is Apple silicon macOS with Nix flakes enabled.
+Intel/AMD and ARM Linux, including WSL2 on Windows, build from the same flake;
+see [Linux and Windows (WSL2)](#linux-and-windows-wsl2) for the differences and
+what has been tested there. Clone the repository, copy the example config, and set `psdzdata` to the
 absolute path of your extracted PSdZData directory:
 
 ```sh
@@ -43,12 +45,55 @@ The launcher extracts and verifies the selected firmware, then reuses the
 verified cache on later runs. By default the cache lives under
 `$XDG_CACHE_HOME/idrive6` or `~/.cache/idrive6`.
 
-The optional settings are `cacheDir`, `display` (`cocoa` or `none`), and
-`cpuCount` (`1` or `2`). Keep PSdZData and the cache outside the repository;
+The optional settings are `cacheDir`, `display` (`cocoa` or `none` on macOS;
+`sdl`, `gtk` or `none` on Linux), and `cpuCount` (`1` or `2`). Keep PSdZData and the cache outside the repository;
 the launcher rejects paths inside the checkout so local firmware and cache
 files never enter the Nix source or store. Both paths may contain spaces.
 The launcher reads `./idrive6.toml` by default; pass `--config /path/to/file`
 to either command to use another config.
+
+## Linux and Windows (WSL2)
+
+The flake also provides `x86_64-linux` and `aarch64-linux` packages. On
+Windows, run them inside WSL2: install a WSL2 distribution (Ubuntu works),
+install Nix with flakes enabled inside it, and keep the checkout, PSdZData and
+the cache on the Linux filesystem (for example under `~`), not under `/mnt/c`.
+The Linux filesystem is faster and case-sensitive, which the extracted QNX
+root needs. WSLg, included with Windows 11 and current Windows 10 WSL
+releases, shows the QEMU windows on the Windows desktop. The commands are the
+same as on macOS:
+
+```sh
+nix run .#idrive6 -- --prepare-only
+nix run .#idrive6
+```
+
+The first run compiles the two patched QEMU builds, which takes a while.
+
+What differs from macOS:
+
+- **Windows.** The head unit, cluster and HUD open as SDL windows. Set
+  `display = "gtk"` to use QEMU's GTK window instead.
+- **Graphics.** The host ANGLE bridge uses ANGLE's Vulkan backend instead of
+  Metal. The launcher selects Mesa's software Vulkan driver (lavapipe) from
+  Nixpkgs, so no GPU driver setup is needed and rendering runs on the CPU. To
+  try another Vulkan driver, set `VK_DRIVER_FILES` to its ICD manifest before
+  launching; the launcher leaves an existing `VK_DRIVER_FILES` or
+  `VK_ICD_FILENAMES` untouched.
+- **Speed.** Apple silicon and Intel/AMD hosts both run the ARMv7 head unit
+  and the MIPS 6WB through QEMU's TCG translator, and Linux adds software
+  rendering on top. Expect lower frame rates than the macOS release host.
+
+Linux status: the flake evaluates for all three systems and the macOS QEMU
+derivations are unchanged. On `x86_64-linux` both patched QEMU builds, the
+ANGLE server and the launcher build, and the firmware-free unit and QEMU
+device tests pass. The ANGLE host smoke test renders through lavapipe, and
+every checked-in reconstructed shader compiles with ANGLE's Vulkan backend.
+The OMAP5430 and Capricorn-M machines open SDL and GTK windows under X11, and
+mouse, wheel and key input in those windows produces the QEMU trace events
+that the CID touch and controller relay reads. Booting the BMW firmware end to
+end has not been verified on Linux or under WSLg yet, because that needs a
+PSdZData extraction; treat it as experimental and check the run logs.
 
 ## Controls and logs
 
@@ -81,7 +126,8 @@ The F32 home interface, text, controller input, and CID touch run through
 BMW's native HmiMain3D and QNX Screen. QEMU supplies an OMAP5430 board model
 and a software display path. The PowerVR SGX540 is not fully emulated; the
 host ANGLE bridge implements the graphics calls used by the tested HMI path.
-Other vehicle variants and Linux hosts are not part of the verified release.
+Other vehicle variants are not part of the verified release, and Linux hosts
+are experimental as described above.
 
 ## Developer notes
 

@@ -10,7 +10,9 @@ from unittest.mock import patch
 
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 sys.path.insert(0, str(TOOLS))
-checked_config = runpy.run_path(str(TOOLS / "idrive6-launch.py"))["checked_config"]
+LAUNCHER = runpy.run_path(str(TOOLS / "idrive6-launch.py"))
+checked_config = LAUNCHER["checked_config"]
+DISPLAYS = LAUNCHER["DISPLAYS"]
 
 
 class LaunchConfigTests(unittest.TestCase):
@@ -36,3 +38,17 @@ class LaunchConfigTests(unittest.TestCase):
         for modules in ("6wb", [], ["hud"], ["6wb", "6wb"], [{}]):
             with self.subTest(modules=modules), self.assertRaisesRegex(ValueError, "modules must select"):
                 self.config(modules=modules)
+
+    def test_display_defaults_to_the_host_window_backend(self):
+        expected = "cocoa" if sys.platform == "darwin" else "sdl"
+        self.assertEqual(DISPLAYS[0], expected)
+        self.assertEqual(self.config()["display"], expected)
+
+    def test_display_accepts_only_this_hosts_backends(self):
+        for display in DISPLAYS:
+            self.assertEqual(self.config(display=display)["display"], display)
+        foreign = "sdl" if sys.platform == "darwin" else "cocoa"
+        for display in (foreign, "vnc", 1):
+            with self.subTest(display=display), self.assertRaisesRegex(ValueError, "display must be"):
+                self.config(display=display)
+
