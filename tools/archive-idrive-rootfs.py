@@ -334,22 +334,6 @@ def _set_child(process: ET.Element, tag: str, text: str) -> None:
     element.text = text
 
 
-def _require_timed_interface(process: ET.Element, number: str) -> bool:
-    entries = process.findall("RequiresTimedInterface")
-    if any((entry.text or "").strip() == number for entry in entries):
-        return False
-    empty = [entry for entry in entries if not (entry.text or "").strip()]
-    if empty:
-        empty[0].text = number
-        return True
-    entry = ET.Element("RequiresTimedInterface")
-    entry.text = number
-    anchor = entries[-1] if entries else process.find("RequiresEnvironment")
-    index = list(process).index(anchor) + (1 if entries else 0) if anchor is not None else len(process)
-    process.insert(index, entry)
-    return True
-
-
 def _v850_link_starter(root: ET.Element, config_path: str) -> list[str]:
     """Point io-ipc at the emulator's V850 transport config and run the stock
     `most` as the local MOST master, with the V850's MOST subnet registered
@@ -366,9 +350,15 @@ def _v850_link_starter(root: ET.Element, config_path: str) -> list[str]:
     # on every variant.
     _set_child(ioipc[0], "VariantCode", "0")
     _set_child(ioipc[0], "VariantMask", "0")
+    # Its timed prerequisites belong to the SPI/GPIO hardware path the UART
+    # transport replaces; on the emulator they never appear, so io-ipc would
+    # never start. (Making most wait for io-ipc kept most from starting too,
+    # and HmiMain3D's app thread then exits during init.)
+    for entry in ioipc[0].findall("RequiresTimedInterface"):
+        if (entry.text or "").strip():
+            notes.append(f"io-ipc no longer waits for timed interface {entry.text.strip()}")
+            entry.text = None
     notes.append("io-ipc runs on every starter variant")
-    ioipc_ready = next((entry.text.strip() for entry in ioipc[0].findall("ProvidesTimedInterface")
-                        if (entry.text or "").strip()), None)
     for process in root.iter("Process"):
         if process is ioipc[0]:
             continue
@@ -410,10 +400,6 @@ def _v850_link_starter(root: ET.Element, config_path: str) -> list[str]:
             notes.append(f"most {tag}: {text}")
         for number in numbers:
             _require_environment(process, number)
-        # Start most after io-ipc has created /dev/ipc (as the car's own
-        # io-ipc variant of this entry does).
-        if ioipc_ready and _require_timed_interface(process, ioipc_ready):
-            notes.append(f"most #{process.findtext('Number')} waits for io-ipc (timed interface {ioipc_ready})")
     return notes
 
 
@@ -719,7 +705,7 @@ def archive_rootfs(
                 fingerprint.update(expected)
                 fingerprint.update(replacement)
         if v850_transport is not None:
-            fingerprint.update(b"v850-link-2\0")
+            fingerprint.update(b"v850-link-3\0")
             fingerprint.update(hashlib.sha256(v850_transport.read_bytes()).digest())
         fingerprint.update(b"1" if compressed else b"0")
     for item in sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix()):
