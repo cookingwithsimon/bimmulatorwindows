@@ -1,0 +1,15 @@
+{
+  "schema": "idrive6-hmi-exact-vertex-map-delta-v1",
+  "base_manifest": "tools/shaders/native-reconstructions/hmi-vertex-map-v67.json",
+  "base_manifest_sha256": "a977b6f3b296dfd2bab68e2a0a85bd5df8fd1073f6cdd2c88f2969319bf38a8d",
+  "purpose": "Feed the scroll-fade text fragment the glyph UV the native vertex program actually writes.",
+  "replacements": [
+    {
+      "asset_path": "common/shader/Text_ColorFading_vertex_fadeVertical.shd",
+      "shader_sha256": "21bd82bd8d53570bd6f330770809bd6f6cdce5907d6dc17e8568ffffba0c4ade",
+      "source_path": "tools/shaders/native-reconstructions/hmi-vertex-v68/21bd82bd8d53570b.glsl",
+      "source_essl_sha256": "3df6f7421a7869333c802970d527dbd2296b29e07639d1e0c5b8eece43f57a8b",
+      "basis": "The translated primary program stores pa[1].x (a_TextureCoordinate.x) in o2.w and pa[1].y in o3.x and never writes o3.y, so V67's vTexCoord = o3.xy sampled (v, 0). 2026-11-16 V113 run on SimonDesk drew My Vehicle rows as solid glyph boxes, consistent with a constant atlas sample."
+    }
+  ]
+}
