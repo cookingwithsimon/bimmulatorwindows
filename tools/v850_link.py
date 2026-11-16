@@ -48,6 +48,11 @@ class FrameParser:
     def __init__(self):
         self.buffer = b""
         self.skipped = 0
+        self.junk = bytearray()  # the first bytes that were not frames, for the log
+
+    def _skip(self, data):
+        self.skipped += len(data)
+        self.junk += data[:max(0, 2048 - len(self.junk))]
 
     def feed(self, data):
         self.buffer += data
@@ -55,16 +60,16 @@ class FrameParser:
         while True:
             start = self.buffer.find(b"\xa5\x5a")
             if start < 0:
-                self.skipped += len(self.buffer) - (1 if self.buffer.endswith(b"\xa5") else 0)
+                self._skip(self.buffer[:-1] if self.buffer.endswith(b"\xa5") else self.buffer)
                 self.buffer = self.buffer[-1:] if self.buffer.endswith(b"\xa5") else b""
                 return frames
-            self.skipped += start
+            self._skip(self.buffer[:start])
             if len(self.buffer) < start + 5:
                 self.buffer = self.buffer[start:]
                 return frames
             length = self.buffer[start + 3] | (self.buffer[start + 4] << 8)
             if length > MAX_FRAME + 0x200:
-                self.skipped += 2
+                self._skip(self.buffer[start:start + 2])
                 self.buffer = self.buffer[start + 2:]
                 continue
             if len(self.buffer) < start + 5 + length:
@@ -485,6 +490,7 @@ class V850:
             self.sock = sock
         self.connected = True
         self.log(f"connected to {self.uart_socket}")
+        junk_logged = 0
         try:
             while not self._stop.is_set():
                 data = sock.recv(4096)
@@ -495,6 +501,11 @@ class V850:
                         self.on_frame(frame_type, payload)
                     except (ValueError, struct.error) as error:
                         self.log(f"bad frame {frame_type:#x}: {error}")
+                if len(self.parser.junk) > junk_logged:
+                    # Not our framing: show what else is talking on UART2.
+                    chunk = bytes(self.parser.junk[junk_logged:])
+                    junk_logged = len(self.parser.junk)
+                    self.log(f"non-frame bytes from guest: {chunk!r}")
         except OSError as error:
             self.log(f"link ended: {error}")
         finally:
@@ -525,5 +536,6 @@ class V850:
     def snapshot(self):
         return {"connected": self.connected, "watchdog_heartbeats": self.heartbeats,
                 "channels": {str(k): v for k, v in sorted(self.channels.items())},
-                "bad_bytes_from_guest": self.parser.skipped, "guest_log": list(self.guest_log)[-12:],
+                "bad_bytes_from_guest": self.parser.skipped,
+                "bad_bytes_sample": bytes(self.parser.junk[:256]).decode("latin-1"), "guest_log": list(self.guest_log)[-12:],
                 "most": self.bridge.snapshot()}

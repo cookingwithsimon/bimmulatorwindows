@@ -60,6 +60,7 @@ class FramingTests(unittest.TestCase):
         frames = parser.feed(stream[:7]) + parser.feed(stream[7:])
         self.assertEqual(frames, [(1, b"abc"), (0x10, b"hi")])
         self.assertEqual(parser.skipped, 4)
+        self.assertEqual(bytes(parser.junk), b"junk")
 
     def test_ioipc_header_round_trip(self):
         message = ioipc_header(3, 9, 25, 1) + b"xyz"
