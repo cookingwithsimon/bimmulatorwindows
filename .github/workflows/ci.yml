@@ -1,0 +1,78 @@
+# Build the emulator and run the firmware-free tests.
+#
+# BMW firmware (PSdZData) can't live on GitHub, so CI never boots the head
+# unit. It checks that the Python tests pass, that the Nix flake builds the
+# patched QEMU machines, the ANGLE server and the launcher on x86_64-linux,
+# and that the QEMU device tests pass against the patched QEMU.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Byte-compile tools and tests
+        run: python -m compileall -q tools tests
+
+      - name: Unit tests (QEMU device tests skip here)
+        run: python -m unittest discover -s tests -v
+
+  nix:
+    name: Nix build and QEMU device tests
+    runs-on: ubuntu-latest
+    # A cold build compiles two patched QEMUs; cached runs are much faster.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Keep the built QEMUs between runs. The key changes whenever the
+      # flake inputs or the QEMU patches change, so those rebuild from scratch.
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 8G
+
+      - name: Build patched QEMU, ANGLE server and launcher
+        run: |
+          nix build --print-build-logs --no-link \
+            .#qemu-omap5 \
+            .#qemu-capricorn-m \
+            .#angle-egl-rpc-server \
+            .#idrive6
+
+      - name: Tests with patched QEMU
+        run: |
+          nix develop -c bash -euo pipefail -c '
+            test -x "$IDRIVE_QEMU" || { echo "IDRIVE_QEMU missing in dev shell"; exit 1; }
+            python3 -m unittest discover -s tests -v 2>&1 | tee unittest.log
+            # The device tests skip when QEMU is missing; fail if any did here.
+            if grep -q "skipped .patched QEMU" unittest.log; then
+              echo "QEMU device tests were skipped"; exit 1
+            fi
+          '
