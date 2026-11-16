@@ -30,6 +30,13 @@ class ShaderMapTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), entry["source_essl_sha256"],
                                  entry["asset_path"])
 
+    def test_profile_and_launcher_pin_the_same_maps(self):
+        pinned = {pinned_map("vertex").name, pinned_map("fragment").name}
+        for path in ("profiles/f32-x20511i-id6-light.json", "tools/idrive6-launch.py"):
+            text = (REPO / path).read_text()
+            found = set(re.findall(r"hmi-(?:vertex|fragment)-map-v\d+\.json", text))
+            self.assertEqual(found, pinned, path)
+
     def test_fade_text_vertex_passes_the_written_uv(self):
         mappings = {entry["asset_path"]: entry for entry in self.resolved(pinned_map("vertex"))["mappings"]}
         vertex = (REPO / mappings["common/shader/Text_ColorFading_vertex_fadeVertical.shd"]["source_path"]).read_text()

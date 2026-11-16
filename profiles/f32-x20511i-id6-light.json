@@ -43,8 +43,8 @@
     "IDRIVE_TCG_THREAD": "multi",
     "IDRIVE_QEMU_CPUS": "2",
     "IDRIVE_ANGLE_DRAW_CAPTURE_LIMIT": "256",
-    "IDRIVE_HMI_VERTEX_SHADER_MAP_MANIFEST": "{repo_root}/tools/shaders/native-reconstructions/hmi-vertex-map-v67.json",
-    "IDRIVE_HMI_FRAGMENT_SHADER_MAP_MANIFEST": "{repo_root}/tools/shaders/native-reconstructions/hmi-fragment-map-v112.json"
+    "IDRIVE_HMI_VERTEX_SHADER_MAP_MANIFEST": "{repo_root}/tools/shaders/native-reconstructions/hmi-vertex-map-v68.json",
+    "IDRIVE_HMI_FRAGMENT_SHADER_MAP_MANIFEST": "{repo_root}/tools/shaders/native-reconstructions/hmi-fragment-map-v113.json"
   },
   "paths": {
     "IDRIVE_BOOT_IMAGE": "{cache_dir}/firmware/x20511i-007_030_001-v1/firmware/sda2/boot1.ifs",

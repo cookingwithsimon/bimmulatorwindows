@@ -193,7 +193,7 @@ def stage(project: Path, cache: Path, package_paths: dict[str, Path], digests: d
         if absent:
             raise ValueError("The firmware extraction is incomplete; missing: " + ", ".join(absent))
 
-        for shader_map in ("hmi-vertex-map-v67.json", "hmi-fragment-map-v112.json"):
+        for shader_map in ("hmi-vertex-map-v68.json", "hmi-fragment-map-v113.json"):
             subprocess.run([
                 sys.executable, str(project / "tools/prepare-hmi-native-essl-map.py"),
                 str(project / "tools/shaders/native-reconstructions" / shader_map),
