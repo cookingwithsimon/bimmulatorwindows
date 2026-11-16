@@ -110,6 +110,22 @@ Backspace for Back, M for Menu, and O for Options. C or R sends Media/Radio,
 T sends Communication, N sends Navigation, and V sends Map. Click the QEMU
 window first to give it keyboard focus.
 
+The same buttons are also on a web page at `http://127.0.0.1:8772/`, next to
+a screenshot of the head unit that refreshes every 1.5 seconds. Scripts can use
+its API to move through menus and check the result:
+
+```sh
+curl -s -X POST -H 'Content-Type: application/json' \
+  --data '{"keys": ["menu", "next", "next", "push"], "delay_ms": 400}' \
+  http://127.0.0.1:8772/api/v1/press
+curl -s -o screen.png http://127.0.0.1:8772/api/v1/screen.png
+```
+
+Buttons are `menu`, `back`, `options`, `media`, `comm`, `nav`, `map`, `push`,
+`up`, `down`, `left`, `right` (tilts) and `next`/`prev` (turning the controller
+clockwise and anticlockwise). Set `IDRIVE_HMI_REMOTE_PORT` to change the port,
+or to `off` to turn the page off.
+
 Each run gets its own directory below the cache's `runs/` folder. It contains
 the guest serial stream, QEMU debug log, ANGLE server log, and a manifest of
 the source and firmware inputs. OTF recording, network packet dumps, ANGLE

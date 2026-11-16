@@ -40,6 +40,7 @@ HMI_BENCH_INPUT="${IDRIVE_HMI_BENCH_INPUT:-0}"
 HMI_RESOURCE_EN_US="${IDRIVE_HMI_RESOURCE_EN_US:-0}"
 HMI_CID_POINTER="${IDRIVE_HMI_CID_POINTER:-0}"
 HMI_CONTROLLER="${IDRIVE_HMI_CONTROLLER:-0}"
+HMI_REMOTE_PORT="${IDRIVE_HMI_REMOTE_PORT:-8772}"
 HMI_CID_PORT=43567
 HMI_CODING_DEVELOPER_MENU="${IDRIVE_HMI_CODING_DEVELOPER_MENU:-0}"
 HMI_CODING_REMOTE_HMI="${IDRIVE_HMI_CODING_REMOTE_HMI:-0}"
@@ -307,6 +308,11 @@ fi
 if [[ "$HMI_BENCH_INPUT" == "1" &&
       ( "$HMI_CODING_CID_TOUCH" != "1" || "${IDRIVE_HMI_FORCE_START:-0}" != "1" ) ]]; then
   echo "IDRIVE_HMI_BENCH_INPUT requires CID touch coding and the direct HMI launch." >&2
+  exit 2
+fi
+if [[ "$HMI_REMOTE_PORT" != "off" ]] &&
+   { [[ ! "$HMI_REMOTE_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$HMI_REMOTE_PORT > 65535 )); }; then
+  echo "IDRIVE_HMI_REMOTE_PORT must be a TCP port between 0 and 65535, or off." >&2
   exit 2
 fi
 if [[ "$HMI_CID_POINTER" != "0" && "$HMI_CID_POINTER" != "1" ]]; then
@@ -884,8 +890,13 @@ ANGLE_EGL_SERVER_PID=""
 OTF_CAPTURE_SERVER_PID=""
 V850_SIM_PID=""
 HMI_CID_POINTER_PID=""
+HMI_REMOTE_PID=""
 cleanup_run()
 {
+  if [[ -n "$HMI_REMOTE_PID" ]]; then
+    kill -TERM "$HMI_REMOTE_PID" 2>/dev/null || true
+    wait "$HMI_REMOTE_PID" 2>/dev/null || true
+  fi
   if [[ -n "$HMI_CID_POINTER_PID" ]]; then
     kill -TERM "$HMI_CID_POINTER_PID" 2>/dev/null || true
     wait "$HMI_CID_POINTER_PID" 2>/dev/null || true
@@ -1579,6 +1590,15 @@ if [[ "$EMULATOR_PROFILE" == "omap5-graphics" ]]; then
       "${CONTROLLER_RELAY_ARGS[@]}" \
       relay "$QEMU_DEBUG_LOG" &
     HMI_CID_POINTER_PID=$!
+    if [[ "$HMI_CONTROLLER" == "1" && "$HMI_REMOTE_PORT" != "off" ]]; then
+      # Buttons and screenshots over HTTP, for menu navigation from scripts.
+      HMI_REMOTE_ARGS=( --controller-socket "$HMI_CONTROLLER_SOCKET" )
+      if [[ -n "$QEMU_QMP_SOCKET" ]]; then
+        HMI_REMOTE_ARGS+=( --qmp-socket "$QEMU_QMP_SOCKET" )
+      fi
+      python3 "$SCRIPT_DIR/tools/hmi-remote.py" "${HMI_REMOTE_ARGS[@]}" serve --port "$HMI_REMOTE_PORT" &
+      HMI_REMOTE_PID=$!
+    fi
   else
     QEMU_ARGS+=( -device usb-mouse )
   fi
