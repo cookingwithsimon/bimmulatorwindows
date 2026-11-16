@@ -20,6 +20,11 @@ SGX_SYNC_WDF_PROBE="${IDRIVE_SGX_SYNC_WDF_PROBE:-0}"
 SGX_VBW_PROBE="${IDRIVE_SGX_VBW_PROBE:-0}"
 CDC_NETWORK="${IDRIVE_QEMU_CDC_NETWORK:-1}"
 MOST_SIPC_HOST_PORT="${IDRIVE_MOST_SIPC_HOST_PORT:-}"
+V850_LINK="${IDRIVE_V850_LINK:-0}"
+V850_SOCKET="${IDRIVE_V850_SOCKET:-}"
+V850_LOG="${IDRIVE_V850_LOG:-}"
+V850_HTTP_PORT="${IDRIVE_V850_HTTP_PORT:-8770}"
+V850_FOLLOW="${IDRIVE_V850_FOLLOW:-}"
 NETWORK_PCAP="${IDRIVE_QEMU_NETWORK_PCAP:-}"
 GUESTFWD_LOG="${IDRIVE_QEMU_GUESTFWD_LOG:-}"
 GLES_RPC_SMOKE="${IDRIVE_GLES_RPC_SMOKE:-0}"
@@ -175,6 +180,35 @@ if [[ -n "$MOST_SIPC_HOST_PORT" ]]; then
   if [[ "$QEMU_RPC_FORWARDER_SCRIPT" == *,* ]]; then
     echo "The MOST SIPC forwarder path must not contain commas." >&2
     exit 1
+  fi
+fi
+if [[ "$V850_LINK" != "0" && "$V850_LINK" != "1" ]]; then
+  echo "IDRIVE_V850_LINK must be 0 or 1." >&2
+  exit 2
+fi
+if [[ "$V850_LINK" == "1" ]]; then
+  # The V850 link replaces io-ipc's SPI transport with a polled UART2 and runs
+  # the stock most daemon as MOST master, so it needs a freshly staged root.
+  if [[ ( "$EMULATOR_PROFILE" != "omap5" && "$EMULATOR_PROFILE" != "omap5-graphics" ) ||
+        -z "${IDRIVE_ROOTFS_TREE:-}" || -n "$QEMU_LOADVM" ]]; then
+    echo "IDRIVE_V850_LINK requires a fresh OMAP5 boot with a staged root." >&2
+    exit 2
+  fi
+  if [[ -n "$MOST_SIPC_HOST_PORT" ]]; then
+    echo "IDRIVE_V850_LINK runs most as master and cannot be combined with IDRIVE_MOST_SIPC_HOST_PORT." >&2
+    exit 2
+  fi
+  if [[ "${IDRIVE_CAPTURE_OMAP_UARTS:-0}" == "1" ]]; then
+    echo "IDRIVE_V850_LINK uses OMAP UART2 and cannot be combined with IDRIVE_CAPTURE_OMAP_UARTS." >&2
+    exit 2
+  fi
+  if [[ ! "$V850_HTTP_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$V850_HTTP_PORT > 65535 )); then
+    echo "IDRIVE_V850_HTTP_PORT must be a TCP port between 0 and 65535." >&2
+    exit 2
+  fi
+  if ! command -v "${IDRIVE_QNX_CLANG:-clang}" > /dev/null || ! command -v ld.lld > /dev/null; then
+    echo "IDRIVE_V850_LINK builds a QNX library and needs clang and ld.lld (nix develop)." >&2
+    exit 2
   fi
 fi
 if [[ -n "$NETWORK_PCAP" ]]; then
@@ -848,12 +882,17 @@ TMP_ROOT="${TMPDIR:-/tmp}"
 WORK_DIR="$(mktemp -d "${TMP_ROOT%/}/idrive6-${EMULATOR_PROFILE}.XXXXXX")"
 ANGLE_EGL_SERVER_PID=""
 OTF_CAPTURE_SERVER_PID=""
+V850_SIM_PID=""
 HMI_CID_POINTER_PID=""
 cleanup_run()
 {
   if [[ -n "$HMI_CID_POINTER_PID" ]]; then
     kill -TERM "$HMI_CID_POINTER_PID" 2>/dev/null || true
     wait "$HMI_CID_POINTER_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$V850_SIM_PID" ]]; then
+    kill -TERM "$V850_SIM_PID" 2>/dev/null || true
+    wait "$V850_SIM_PID" 2>/dev/null || true
   fi
   if [[ -n "$OTF_CAPTURE_SERVER_PID" ]]; then
     kill -TERM "$OTF_CAPTURE_SERVER_PID" 2>/dev/null || true
@@ -1012,6 +1051,16 @@ PY
   export IDRIVE_HMI_CONTROLLER_LIBRARY="$WORK_DIR/libidrive-hmi-controller.so"
   "$SCRIPT_DIR/tools/build-qnx-hmi-controller.sh" "$IDRIVE_HMI_CONTROLLER_LIBRARY"
 fi
+if [[ "$V850_LINK" == "1" ]]; then
+  V850_SOCKET="${V850_SOCKET:-$WORK_DIR/v850.sock}"
+  V850_LOG="${V850_LOG:-$WORK_DIR/v850.log}"
+  if (( ${#V850_SOCKET} >= 104 )) || [[ "$V850_SOCKET" == *,* ]]; then
+    echo "The V850 socket path must be shorter than 104 bytes and contain no commas: $V850_SOCKET" >&2
+    exit 1
+  fi
+  V850_TRANSPORT="$WORK_DIR/ioipc-idrive-v850.so"
+  "$SCRIPT_DIR/tools/build-qnx-v850-transport.sh" "$V850_TRANSPORT"
+fi
 python3 "$SCRIPT_DIR/tools/prepare-vexpress-ifs.py" \
   --profile "$PREPARE_PROFILE" \
   "$BOOT_IMAGE" "$PREPARED_IMAGE" "$SECONDARY_STUB"
@@ -1061,6 +1110,10 @@ if [[ -n "${IDRIVE_ROOTFS_TREE:-}" && -z "$QEMU_LOADVM" ]]; then
   if [[ -n "$MOST_SIPC_HOST_PORT" ]]; then
     ROOT_ARCHIVE="${ROOT_ARCHIVE%.tar.gz}-most-sipc.tar.gz"
     ARCHIVE_PROFILE_ARGS+=(--most-sipc-stack)
+  fi
+  if [[ "$V850_LINK" == "1" ]]; then
+    ROOT_ARCHIVE="${ROOT_ARCHIVE%.tar.gz}-v850.tar.gz"
+    ARCHIVE_PROFILE_ARGS+=(--v850-transport "$V850_TRANSPORT")
   fi
   if [[ -n "${IDRIVE_STARTER_VARIANT:-}" && "${IDRIVE_SOFTWARE_SCREEN_PROBE:-0}" == "1" ]]; then
     ARCHIVE_PROFILE_ARGS+=(--software-screen-variant)
@@ -1531,6 +1584,23 @@ if [[ "$EMULATOR_PROFILE" == "omap5-graphics" ]]; then
   fi
 fi
 
+QEMU_V850_SERIAL_ARGS=()
+if [[ "$V850_LINK" == "1" ]]; then
+  # OMAP UART1 is serial1 and UART2 is serial2 (UART3 is the console, serial0).
+  QEMU_V850_SERIAL_ARGS=(
+    -serial null
+    -chardev "socket,id=idrive-v850,path=$V850_SOCKET,server=on,wait=off"
+    -serial chardev:idrive-v850
+  )
+  V850_SIM_ARGS=( "$V850_SOCKET" --port "$V850_HTTP_PORT" --log "$V850_LOG" )
+  if [[ -n "$V850_FOLLOW" ]]; then
+    V850_SIM_ARGS+=( --follow "$V850_FOLLOW" )
+  fi
+  python3 "$SCRIPT_DIR/tools/v850-sim.py" "${V850_SIM_ARGS[@]}" &
+  V850_SIM_PID=$!
+  echo "Virtual V850 on OMAP UART2 ($V850_SOCKET); log: $V850_LOG"
+fi
+
 if [[ -n "$GDB_PORT" ]]; then
   QEMU_ARGS+=( -S -gdb "tcp::$GDB_PORT" )
   echo "QEMU is paused for GDB on TCP port $GDB_PORT."
@@ -1555,6 +1625,7 @@ if [[ "$MONITOR_MODE" == "true" ]]; then
         ( "$EMULATOR_PROFILE" == "omap5" || "$EMULATOR_PROFILE" == "omap5-graphics" ) ]]; then
     QEMU_SERIAL0_ARGS+=( "${QEMU_AUX_SERIAL_ARGS[@]}" )
   fi
+  QEMU_SERIAL0_ARGS+=( "${QEMU_V850_SERIAL_ARGS[@]}" )
   if [[ -n "${IDRIVE_HMI_RUN_MANIFEST:-}" ]]; then
     python3 "$SCRIPT_DIR/tools/write-hmi-run-manifest.py" \
       --output "$IDRIVE_HMI_RUN_MANIFEST" \
@@ -1579,6 +1650,7 @@ else
         ( "$EMULATOR_PROFILE" == "omap5" || "$EMULATOR_PROFILE" == "omap5-graphics" ) ]]; then
     QEMU_SERIAL0_ARGS+=( "${QEMU_AUX_SERIAL_ARGS[@]}" )
   fi
+  QEMU_SERIAL0_ARGS+=( "${QEMU_V850_SERIAL_ARGS[@]}" )
   if [[ -n "${IDRIVE_HMI_RUN_MANIFEST:-}" ]]; then
     python3 "$SCRIPT_DIR/tools/write-hmi-run-manifest.py" \
       --output "$IDRIVE_HMI_RUN_MANIFEST" \

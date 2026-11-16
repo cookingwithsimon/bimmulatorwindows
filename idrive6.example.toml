@@ -18,3 +18,8 @@ modules = ["head-unit", "6wb"]
 # so the HMI starts its remoting bundle and loads plugin apps from
 # /opt/hmi/ID5/data/ro/Plugins. Default false.
 # pluginApps = true
+
+# Optional, experimental: start a virtual V850 so the head unit gets car data
+# (speed, gear, ignition, range, trip) over MOST. With the 6WB module running,
+# the head unit follows the 6WB simulator's controls. Default false.
+# carData = true

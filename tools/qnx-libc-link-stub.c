@@ -20,11 +20,35 @@ long long lseek64(int fd, long long offset, int whence)
 {
     (void)fd; (void)offset; (void)whence; return -1;
 }
+int printf(const char *format, ...) { (void)format; return -1; }
+#endif
+#if defined(IDRIVE_HMI_TITLE_CACHE_LINK) || defined(IDRIVE_V850_TRANSPORT_LINK)
 int snprintf(char *buffer, unsigned int size, const char *format, ...)
 {
     (void)buffer; (void)size; (void)format; return -1;
 }
-int printf(const char *format, ...) { (void)format; return -1; }
+#endif
+
+/* Link-only imports for the io-ipc V850 transport. */
+#ifdef IDRIVE_V850_TRANSPORT_LINK
+void *memcpy(void *target, const void *source, unsigned int length)
+{
+    (void)source; (void)length; return target;
+}
+void *memset(void *target, int value, unsigned int length)
+{
+    (void)value; (void)length; return target;
+}
+int pthread_create(void *thread, const void *attributes, void *(*start)(void *), void *argument)
+{
+    (void)thread; (void)attributes; (void)start; (void)argument; return -1;
+}
+int pthread_mutex_init(void *mutex, const void *attributes)
+{
+    (void)mutex; (void)attributes; return -1;
+}
+int pthread_mutex_lock(void *mutex) { (void)mutex; return -1; }
+int pthread_mutex_unlock(void *mutex) { (void)mutex; return -1; }
 #endif
 
 /* Additional link-only imports for the native shared-image probe. The IFS
