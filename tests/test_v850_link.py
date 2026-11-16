@@ -204,8 +204,9 @@ STARTER = """<?xml version="1.0"?>
   <EnvironmentTable>
     <Environment><Number>1</Number><Name>A</Name><EnvName>A</EnvName><Value>1</Value></Environment>
   </EnvironmentTable>
-  <Process><Number>5</Number><Name>/bin/io-ipc</Name><Args>-c /etc/io-ipc-o5.cfg -v</Args><ResArgs>-c /etc/io-ipc-o5.cfg</ResArgs></Process>
-  <Process><Number>6</Number><Name>/opt/sys/bin/most</Name><Args>--devmode=client --serverRoleName=MOSTSubSystemServer --heartbeat-interval=500 --SIPCProtocol=tcp</Args><HighMem>1</HighMem></Process>
+  <Process><Number>5</Number><Name>/bin/io-ipc</Name><Args>-c /etc/io-ipc-o5.cfg -v</Args><ResArgs>-c /etc/io-ipc-o5.cfg</ResArgs><VariantCode>82000000</VariantCode><VariantMask>82000000</VariantMask><ProvidesTimedInterface>20</ProvidesTimedInterface></Process>
+  <Process><Number>6</Number><Name>/opt/sys/bin/most</Name><Args>--devmode=client --serverRoleName=MOSTSubSystemServer --heartbeat-interval=500 --SIPCProtocol=tcp</Args><RequiresTimedInterface /><HighMem>1</HighMem></Process>
+  <Process><Number>7</Number><Name>/bin/devc-sernuke</Name><Args>-N -u4 -b921600 0x4806C000^2,105</Args><ResArgs>-u4 0x4806c000</ResArgs></Process>
 </Starter>
 """
 
@@ -215,8 +216,12 @@ class ArchiveTests(unittest.TestCase):
         root = ET.fromstring(STARTER)
         notes = ARCHIVER["_v850_link_starter"](root, "/etc/io-ipc-idrive-v850.cfg")
         self.assertTrue(notes)
-        ioipc, most = root.findall("Process")
+        ioipc, most, serial = root.findall("Process")
         self.assertEqual(ioipc.findtext("Args"), "-c /etc/io-ipc-idrive-v850.cfg -v")
+        self.assertEqual((ioipc.findtext("VariantCode"), ioipc.findtext("VariantMask")), ("0", "0"))
+        self.assertEqual(most.findtext("RequiresTimedInterface"), "20")
+        self.assertEqual(serial.findtext("Args"), "-N -u4 -b921600 0x4806E000^2,102")
+        self.assertEqual(serial.findtext("ResArgs"), "-u4 0x4806E000")
         self.assertEqual(ioipc.findtext("ResArgs"), "-c /etc/io-ipc-idrive-v850.cfg")
         self.assertEqual(most.findtext("Args"), "--devmode=master --heartbeat-interval=0 --SIPCProtocol=tcp")
         number = most.findtext("RequiresEnvironment")

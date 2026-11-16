@@ -320,6 +320,36 @@ def _require_environment(process: ET.Element, number: str) -> None:
     process.insert(index, entry)
 
 
+# The stock root drives OMAP UART2 with devc-sernuke (/dev/ser4). The virtual
+# V850 needs UART2 to itself, so that driver moves to UART4, which the
+# emulator maps but connects to nothing (base and GIC interrupt 70 + 32).
+V850_UART2 = re.compile(r"0x4806c000(\^\d+)?(,105)?", re.IGNORECASE)
+V850_UART4_BASE, V850_UART4_IRQ = "0x4806E000", "102"
+
+
+def _set_child(process: ET.Element, tag: str, text: str) -> None:
+    element = process.find(tag)
+    if element is None:
+        element = ET.SubElement(process, tag)
+    element.text = text
+
+
+def _require_timed_interface(process: ET.Element, number: str) -> bool:
+    entries = process.findall("RequiresTimedInterface")
+    if any((entry.text or "").strip() == number for entry in entries):
+        return False
+    empty = [entry for entry in entries if not (entry.text or "").strip()]
+    if empty:
+        empty[0].text = number
+        return True
+    entry = ET.Element("RequiresTimedInterface")
+    entry.text = number
+    anchor = entries[-1] if entries else process.find("RequiresEnvironment")
+    index = list(process).index(anchor) + (1 if entries else 0) if anchor is not None else len(process)
+    process.insert(index, entry)
+    return True
+
+
 def _v850_link_starter(root: ET.Element, config_path: str) -> list[str]:
     """Point io-ipc at the emulator's V850 transport config and run the stock
     `most` as the local MOST master, with the V850's MOST subnet registered
@@ -329,6 +359,27 @@ def _v850_link_starter(root: ET.Element, config_path: str) -> list[str]:
              if (process.findtext("Name") or "").endswith("/io-ipc")]
     if not ioipc:
         raise RuntimeError("starter.cfg has no io-ipc process")
+    if len(ioipc) != 1:
+        raise RuntimeError(f"expected one io-ipc process in starter.cfg, found {len(ioipc)}")
+    # On the car io-ipc only runs on variants with bit 0x02000000 (code and
+    # mask 82000000), which the emulator's development variant lacks. Run it
+    # on every variant.
+    _set_child(ioipc[0], "VariantCode", "0")
+    _set_child(ioipc[0], "VariantMask", "0")
+    notes.append("io-ipc runs on every starter variant")
+    ioipc_ready = next((entry.text.strip() for entry in ioipc[0].findall("ProvidesTimedInterface")
+                        if (entry.text or "").strip()), None)
+    for process in root.iter("Process"):
+        if process is ioipc[0]:
+            continue
+        for tag in ("Args", "ResArgs"):
+            element = process.find(tag)
+            if element is None or not element.text or not V850_UART2.search(element.text):
+                continue
+            element.text = V850_UART2.sub(
+                lambda match: V850_UART4_BASE + (match.group(1) or "") + ("," + V850_UART4_IRQ if match.group(2) else ""),
+                element.text)
+            notes.append(f"{process.findtext('Name')} {tag} moved off UART2: {element.text}")
     for process in ioipc:
         for tag in ("Args", "ResArgs"):
             element = process.find(tag)
@@ -359,6 +410,10 @@ def _v850_link_starter(root: ET.Element, config_path: str) -> list[str]:
             notes.append(f"most {tag}: {text}")
         for number in numbers:
             _require_environment(process, number)
+        # Start most after io-ipc has created /dev/ipc (as the car's own
+        # io-ipc variant of this entry does).
+        if ioipc_ready and _require_timed_interface(process, ioipc_ready):
+            notes.append(f"most #{process.findtext('Number')} waits for io-ipc (timed interface {ioipc_ready})")
     return notes
 
 
@@ -664,7 +719,7 @@ def archive_rootfs(
                 fingerprint.update(expected)
                 fingerprint.update(replacement)
         if v850_transport is not None:
-            fingerprint.update(b"v850-link\0")
+            fingerprint.update(b"v850-link-2\0")
             fingerprint.update(hashlib.sha256(v850_transport.read_bytes()).digest())
         fingerprint.update(b"1" if compressed else b"0")
     for item in sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix()):
