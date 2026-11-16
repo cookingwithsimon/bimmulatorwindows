@@ -50,7 +50,7 @@ QNX_HMI_WEB_INSPECTOR="${IDRIVE_QNX_HMI_WEB_INSPECTOR:-0}"
 HMI_COMM_MODULES="${IDRIVE_HMI_COMM_MODULES:-DSI,MOSTSubSystem}"
 # Pin the last verified shader map generation. The unversioned manifests carry
 # stale ESSL source hashes and fail validation against the checked-in sources.
-HMI_VERTEX_SHADER_MAP_MANIFEST="${IDRIVE_HMI_VERTEX_SHADER_MAP_MANIFEST:-$SCRIPT_DIR/tools/shaders/native-reconstructions/hmi-vertex-map-v67.json}"
+HMI_VERTEX_SHADER_MAP_MANIFEST="${IDRIVE_HMI_VERTEX_SHADER_MAP_MANIFEST:-$SCRIPT_DIR/tools/shaders/native-reconstructions/hmi-vertex-map-v68.json}"
 HMI_FRAGMENT_SHADER_MAP_MANIFEST="${IDRIVE_HMI_FRAGMENT_SHADER_MAP_MANIFEST:-$SCRIPT_DIR/tools/shaders/native-reconstructions/hmi-fragment-map-v113.json}"
 ANGLE_SCREEN_BRIDGE="${IDRIVE_ANGLE_SCREEN_BRIDGE:-0}"
 OTF_CAPTURE="${IDRIVE_OTF_CAPTURE:-0}"
