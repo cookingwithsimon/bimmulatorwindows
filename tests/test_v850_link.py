@@ -204,6 +204,8 @@ STARTER = """<?xml version="1.0"?>
   <EnvironmentTable>
     <Environment><Number>1</Number><Name>A</Name><EnvName>A</EnvName><Value>1</Value></Environment>
   </EnvironmentTable>
+  <Package><Number>36</Number><Name>SPI_IPC</Name><RequestState>RUN</RequestState><HostsProcess>4</HostsProcess><HostsProcess>5</HostsProcess></Package>
+  <Process><Number>4</Number><Name>/bin/dev-spi-omap543x</Name><Args>-c /etc/dev-spi_v850_omap543x.cfg</Args></Process>
   <Process><Number>5</Number><Name>/bin/io-ipc</Name><Args>-c /etc/io-ipc-o5.cfg -v</Args><ResArgs>-c /etc/io-ipc-o5.cfg</ResArgs><VariantCode>82000000</VariantCode><VariantMask>82000000</VariantMask><ProvidesTimedInterface>20</ProvidesTimedInterface><RequiresTimedInterface>53</RequiresTimedInterface></Process>
   <Process><Number>6</Number><Name>/opt/sys/bin/most</Name><Args>--devmode=client --serverRoleName=MOSTSubSystemServer --heartbeat-interval=500 --SIPCProtocol=tcp</Args><RequiresTimedInterface /><HighMem>1</HighMem></Process>
   <Process><Number>7</Number><Name>/bin/devc-sernuke</Name><Args>-N -u4 -b921600 0x4806C000^2,105</Args><ResArgs>-u4 0x4806c000</ResArgs></Process>
@@ -216,7 +218,8 @@ class ArchiveTests(unittest.TestCase):
         root = ET.fromstring(STARTER)
         notes = ARCHIVER["_v850_link_starter"](root, "/etc/io-ipc-idrive-v850.cfg")
         self.assertTrue(notes)
-        ioipc, most, serial = root.findall("Process")
+        spi, ioipc, most, serial = root.findall("Process")
+        self.assertEqual([entry.text for entry in root.find("Package").findall("HostsProcess")], ["5"])
         self.assertEqual(ioipc.findtext("Args"), "-c /etc/io-ipc-idrive-v850.cfg -v")
         self.assertEqual((ioipc.findtext("VariantCode"), ioipc.findtext("VariantMask")), ("0", "0"))
         self.assertFalse(ioipc.findtext("RequiresTimedInterface"))

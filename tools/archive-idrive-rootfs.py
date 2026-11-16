@@ -359,6 +359,22 @@ def _v850_link_starter(root: ET.Element, config_path: str) -> list[str]:
             notes.append(f"io-ipc no longer waits for timed interface {entry.text.strip()}")
             entry.text = None
     notes.append("io-ipc runs on every starter variant")
+    # io-ipc shares its starter package with the car's McSPI V850 driver
+    # (dev-spi-omap543x -c /etc/dev-spi_v850_*.cfg), which has no hardware
+    # here and holds up the rest of the package. The UART transport does not
+    # use it, so the package no longer hosts it.
+    ioipc_number = (ioipc[0].findtext("Number") or "").strip()
+    spi = {(process.findtext("Number") or "").strip() for process in root.iter("Process")
+           if "dev-spi" in (process.findtext("Name") or "")
+           and "v850" in (process.findtext("Args") or "").lower()}
+    for package in root.iter("Package"):
+        hosted = package.findall("HostsProcess")
+        if not any((entry.text or "").strip() == ioipc_number for entry in hosted):
+            continue
+        for entry in hosted:
+            if (entry.text or "").strip() in spi:
+                package.remove(entry)
+                notes.append(f"package {package.findtext('Name')} no longer starts the McSPI V850 driver #{entry.text.strip()}")
     for process in root.iter("Process"):
         if process is ioipc[0]:
             continue
@@ -705,7 +721,7 @@ def archive_rootfs(
                 fingerprint.update(expected)
                 fingerprint.update(replacement)
         if v850_transport is not None:
-            fingerprint.update(b"v850-link-3\0")
+            fingerprint.update(b"v850-link-4\0")
             fingerprint.update(hashlib.sha256(v850_transport.read_bytes()).digest())
         fingerprint.update(b"1" if compressed else b"0")
     for item in sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix()):
