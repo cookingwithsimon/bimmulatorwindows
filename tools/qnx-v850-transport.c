@@ -41,7 +41,7 @@ extern int ioipc_bp_alloc(u32 size, void *desc);
 extern int ioipc_bp_wait_alloc(u32 size, void *desc);
 extern int ioipc_bp_free(void *desc);
 
-#define PROT_READ_WRITE 3
+#define PROT_READ_WRITE 0x300 /* QNX PROT_READ 0x100 | PROT_WRITE 0x200 */
 #define PROT_NOCACHE 0x800
 #define MAP_SHARED 1
 #define UART_RBR 0x00
