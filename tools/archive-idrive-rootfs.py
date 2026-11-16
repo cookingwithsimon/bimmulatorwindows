@@ -9,6 +9,7 @@ import hashlib
 import io
 import os
 from pathlib import Path
+import re
 import struct
 import sys
 import tarfile
@@ -291,6 +292,164 @@ HEADLESS_STOP_PACKAGES = {"NET", "PACKET_FILTER", "TILER", "SCREEN"}
 GRAPHICS_STOP_PACKAGES = {"PACKET_FILTER"}
 GRAPHICS_RUN_PACKAGES = {"HMI", "HMI_BMW_OTF_AGENT", "TRACE", "USB"}
 
+V850_TRANSPORT_NAME = "ioipc-idrive-v850.so"
+V850_IOIPC_CONFIG_NAME = "io-ipc-idrive-v850.cfg"
+V850_TRANSPORT_DIRS = ("lib", "lib/dll", "usr/lib", "opt/sys/lib")
+V850_MOST_ENVIRONMENT = (("V850_MOSTSUBNET_OMAP_DIRECT_REGISTRATION", "1"),)
+
+
+def _environment_entry(root: ET.Element, name: str, env_name: str, value: str) -> str:
+    table = root.find("EnvironmentTable")
+    count = root.find("EnvironmentCount")
+    if table is None or count is None:
+        raise RuntimeError("starter.cfg lacks the environment table")
+    number = str(max(int(env.findtext("Number")) for env in table.findall("Environment")) + 1)
+    environment = ET.SubElement(table, "Environment")
+    for tag, text in (("Number", number), ("Name", name), ("EnvName", env_name),
+                      ("Value", value), ("Overwrite", "1")):
+        ET.SubElement(environment, tag).text = text
+    count.text = str(len(table.findall("Environment")))
+    return number
+
+
+def _require_environment(process: ET.Element, number: str) -> None:
+    high_mem = process.find("HighMem")
+    index = list(process).index(high_mem) if high_mem is not None else len(process)
+    entry = ET.Element("RequiresEnvironment")
+    entry.text = number
+    process.insert(index, entry)
+
+
+# The stock root drives OMAP UART2 with devc-sernuke (/dev/ser4). The virtual
+# V850 needs UART2 to itself, so that driver moves to UART4, which the
+# emulator maps but connects to nothing (base and GIC interrupt 70 + 32).
+V850_UART2 = re.compile(r"0x4806c000(\^\d+)?(,105)?", re.IGNORECASE)
+V850_UART4_BASE, V850_UART4_IRQ = "0x4806E000", "102"
+
+
+def _set_child(process: ET.Element, tag: str, text: str) -> None:
+    element = process.find(tag)
+    if element is None:
+        element = ET.SubElement(process, tag)
+    element.text = text
+
+
+def _v850_link_starter(root: ET.Element, config_path: str) -> list[str]:
+    """Point io-ipc at the emulator's V850 transport config and run the stock
+    `most` as the local MOST master, with the V850's MOST subnet registered
+    over io-ipc channel 25 (the path car data takes to the HMI)."""
+    notes = []
+    ioipc = [process for process in root.iter("Process")
+             if (process.findtext("Name") or "").endswith("/io-ipc")]
+    if not ioipc:
+        raise RuntimeError("starter.cfg has no io-ipc process")
+    if len(ioipc) != 1:
+        raise RuntimeError(f"expected one io-ipc process in starter.cfg, found {len(ioipc)}")
+    # On the car io-ipc only runs on variants with bit 0x02000000 (code and
+    # mask 82000000), which the emulator's development variant lacks. Run it
+    # on every variant.
+    _set_child(ioipc[0], "VariantCode", "0")
+    _set_child(ioipc[0], "VariantMask", "0")
+    # Its timed prerequisites belong to the SPI/GPIO hardware path the UART
+    # transport replaces; on the emulator they never appear, so io-ipc would
+    # never start. (Making most wait for io-ipc kept most from starting too,
+    # and HmiMain3D's app thread then exits during init.)
+    for entry in ioipc[0].findall("RequiresTimedInterface"):
+        if (entry.text or "").strip():
+            notes.append(f"io-ipc no longer waits for timed interface {entry.text.strip()}")
+            entry.text = None
+    notes.append("io-ipc runs on every starter variant")
+    # io-ipc shares its starter package with the car's McSPI V850 driver
+    # (dev-spi-omap543x -c /etc/dev-spi_v850_*.cfg), which has no hardware
+    # here and holds up the rest of the package. The UART transport does not
+    # use it, so the package no longer hosts it.
+    ioipc_number = (ioipc[0].findtext("Number") or "").strip()
+    spi = {(process.findtext("Number") or "").strip() for process in root.iter("Process")
+           if "dev-spi" in (process.findtext("Name") or "")
+           and "v850" in (process.findtext("Args") or "").lower()}
+    for package in root.iter("Package"):
+        hosted = package.findall("HostsProcess")
+        if not any((entry.text or "").strip() == ioipc_number for entry in hosted):
+            continue
+        for entry in hosted:
+            if (entry.text or "").strip() in spi:
+                package.remove(entry)
+                notes.append(f"package {package.findtext('Name')} no longer starts the McSPI V850 driver #{entry.text.strip()}")
+    for process in root.iter("Process"):
+        if process is ioipc[0]:
+            continue
+        for tag in ("Args", "ResArgs"):
+            element = process.find(tag)
+            if element is None or not element.text or not V850_UART2.search(element.text):
+                continue
+            element.text = V850_UART2.sub(
+                lambda match: V850_UART4_BASE + (match.group(1) or "") + ("," + V850_UART4_IRQ if match.group(2) else ""),
+                element.text)
+            notes.append(f"{process.findtext('Name')} {tag} moved off UART2: {element.text}")
+    for process in ioipc:
+        for tag in ("Args", "ResArgs"):
+            element = process.find(tag)
+            if element is None or not element.text:
+                continue
+            element.text, count = re.subn(r"/\S*io-ipc[^\s/]*\.cfg", config_path, element.text)
+            if count:
+                notes.append(f"io-ipc {tag}: {element.text}")
+    if not any("io-ipc " in note for note in notes):
+        raise RuntimeError("starter.cfg io-ipc entries name no io-ipc .cfg file")
+    most = [process for process in root.iter("Process")
+            if process.findtext("Name") == "/opt/sys/bin/most"
+            and "--devmode=client" in (process.findtext("Args") or "")]
+    if not most:
+        raise RuntimeError("starter.cfg has no stock MOST client to run as master")
+    numbers = [_environment_entry(root, f"IDRIVE_V850_{name}", name, value)
+               for name, value in V850_MOST_ENVIRONMENT]
+    for process in most:
+        for tag in ("Args", "ResArgs"):
+            element = process.find(tag)
+            if element is None or not element.text:
+                continue
+            text = re.sub(r"--devmode=client(\s+--serverRoleName=\S+)?", "--devmode=master", element.text)
+            # The emulated guest can stall for seconds; most's own watchdog
+            # would then get it killed.
+            text = re.sub(r"--heartbeat-interval=\d+", "--heartbeat-interval=0", text)
+            element.text = text
+            notes.append(f"most {tag}: {text}")
+        for number in numbers:
+            _require_environment(process, number)
+    return notes
+
+
+def _v850_ioipc_config(root: Path, config: ET.Element) -> tuple[str, str, bytes, str]:
+    """(original cfg guest path, new cfg guest path, new cfg bytes, transport dir)."""
+    paths = set()
+    for process in config.iter("Process"):
+        if (process.findtext("Name") or "").endswith("/io-ipc"):
+            for tag in ("Args", "ResArgs"):
+                paths.update(re.findall(r"/\S*io-ipc[^\s/]*\.cfg", process.findtext(tag) or ""))
+    if len(paths) != 1:
+        raise RuntimeError(f"expected one io-ipc config in starter.cfg, found {sorted(paths)}")
+    original = paths.pop()
+    source = root / original.lstrip("/")
+    if not source.is_file():
+        raise RuntimeError(f"io-ipc config not found in the staged root: {source}")
+    text = source.read_text(encoding="latin-1")
+    lines = [line for line in text.splitlines() if line.startswith("tchannel=")]
+    if len(lines) != 1:
+        raise RuntimeError(f"{original} must contain exactly one tchannel= line")
+    stock = re.search(r"filename=([^,\s]+)", lines[0])
+    index = re.search(r"t_index=(\d+)", lines[0])
+    replacement = (f"tchannel=t_index={index.group(1) if index else 0},"
+                   f'filename={V850_TRANSPORT_NAME},subopts="v850=1"')
+    data = text.replace(lines[0], replacement, 1).encode("latin-1")
+    transport_dir = "lib"
+    if stock:
+        for directory in V850_TRANSPORT_DIRS:
+            if (root / directory / stock.group(1)).exists():
+                transport_dir = directory
+                break
+    new_path = str(Path(original).with_name(V850_IOIPC_CONFIG_NAME))
+    return original, new_path, data, transport_dir
+
 
 def _profile_starter_config(
     config: Path,
@@ -302,8 +461,12 @@ def _profile_starter_config(
     defer_otf_agent: bool = False,
     most_sipc_stack: bool = False,
     run_packages: set[str] | None = None,
+    v850_config_path: str | None = None,
 ) -> bytes:
     root = ET.fromstring(config.read_bytes())
+    if v850_config_path is not None:
+        for note in _v850_link_starter(root, v850_config_path):
+            print(f"V850 link: {note}")
     if most_sipc_stack:
         table = root.find("EnvironmentTable")
         count = root.find("EnvironmentCount")
@@ -465,6 +628,7 @@ def archive_rootfs(
     hmi_coding_remote_hmi: bool = False,
     hmi_coding_camera_rvc: bool = False,
     hmi_variantregistry_f32: bool = False,
+    v850_transport: Path | None = None,
     cache_unchanged: bool = False,
 ) -> int:
     root = root.resolve()
@@ -481,6 +645,14 @@ def archive_rootfs(
         raise RuntimeError("bench input requires CID touch coding")
     if hmi_resource_en_us and not hmi_coding_id6l:
         raise RuntimeError("initial English resources require the ID6 Light coding overlay")
+    if v850_transport is not None:
+        if most_sipc_stack:
+            raise RuntimeError("the V850 link runs most as master; it cannot be combined with the MOST SIPC stack")
+        if emulator_profile not in {"omap5", "omap5-graphics"}:
+            raise RuntimeError("the V850 link requires an OMAP5 emulator profile")
+        v850_transport = v850_transport.resolve()
+        if not v850_transport.is_file():
+            raise RuntimeError(f"V850 transport library not found: {v850_transport}")
     fingerprint = hashlib.sha256() if cache_unchanged else None
     if fingerprint is not None:
         fingerprint.update(ARCHIVE_CACHE_SCHEMA)
@@ -548,6 +720,9 @@ def archive_rootfs(
                 fingerprint.update(len(expected).to_bytes(4, "little"))
                 fingerprint.update(expected)
                 fingerprint.update(replacement)
+        if v850_transport is not None:
+            fingerprint.update(b"v850-link-4\0")
+            fingerprint.update(hashlib.sha256(v850_transport.read_bytes()).digest())
         fingerprint.update(b"1" if compressed else b"0")
     for item in sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix()):
         relative = item.relative_to(root).as_posix()
@@ -684,6 +859,17 @@ def archive_rootfs(
             if emulator_profile == "omap5-graphics"
             else HEADLESS_STOP_PACKAGES
         )
+        v850_files = {}
+        v850_config_path = None
+        if v850_transport is not None:
+            original, v850_config_path, cfg_data, transport_dir = _v850_ioipc_config(
+                root, ET.fromstring(profile_config.read_bytes())
+            )
+            v850_files[v850_config_path.lstrip("/")] = (root / original.lstrip("/"), cfg_data)
+            v850_files[f"{transport_dir}/{V850_TRANSPORT_NAME}"] = (
+                v850_transport, v850_transport.read_bytes()
+            )
+            print(f"V850 link: {original} -> {v850_config_path}, transport in /{transport_dir}")
         profile_config_data = _profile_starter_config(
             profile_config,
             stop_packages,
@@ -697,6 +883,7 @@ def archive_rootfs(
                 if emulator_profile == "omap5-graphics"
                 else set()
             ),
+            v850_config_path=v850_config_path,
         )
         if defer_otf_agent:
             otf_socket_config = root / "opt/hmi/otf/socket.cfg"
@@ -775,6 +962,7 @@ def archive_rootfs(
             )
     else:
         profile_config_data = None
+        v850_files = {}
 
     def add_tree(archive: tarfile.TarFile) -> None:
         def select(entry: tarfile.TarInfo) -> tarfile.TarInfo | None:
@@ -789,6 +977,8 @@ def archive_rootfs(
             if hmi_coding_library is not None and entry.name == HMI_CODING_PATH:
                 return None
             if entry.name in hmi_binary_overlays:
+                return None
+            if entry.name in v850_files:
                 return None
             if (
                 hmi_variantregistry is not None
@@ -830,6 +1020,11 @@ def archive_rootfs(
             archive.addfile(_normalize(entry), io.BytesIO(hmi_coding_library_data))
         for relative_path, data in hmi_binary_overlays.items():
             entry = archive.gettarinfo(str(root / relative_path), arcname=relative_path)
+            archive.addfile(_normalize(entry), io.BytesIO(data))
+        for relative_path, (source, data) in sorted(v850_files.items()):
+            entry = archive.gettarinfo(str(source), arcname=relative_path)
+            entry.size = len(data)
+            entry.mode = 0o755 if relative_path.endswith(".so") else 0o644
             archive.addfile(_normalize(entry), io.BytesIO(data))
         if hmi_variantregistry is not None:
             entry = archive.gettarinfo(
@@ -953,6 +1148,11 @@ def main() -> int:
         help="select indexed F32 3D vehicle assets in an emulator-only PBVAR copy",
     )
     parser.add_argument(
+        "--v850-transport",
+        type=Path,
+        help="install this io-ipc V850 transport and run most as master (emulator car-data link)",
+    )
+    parser.add_argument(
         "--cache-unchanged",
         action="store_true",
         help="reuse the output archive when the staged tree and profile are unchanged",
@@ -978,6 +1178,7 @@ def main() -> int:
             hmi_coding_remote_hmi=args.hmi_coding_remote_hmi,
             hmi_coding_camera_rvc=args.hmi_coding_camera_rvc,
             hmi_variantregistry_f32=args.hmi_variantregistry_f32,
+            v850_transport=args.v850_transport,
             cache_unchanged=args.cache_unchanged,
         )
     except (OSError, RuntimeError, tarfile.TarError) as error:

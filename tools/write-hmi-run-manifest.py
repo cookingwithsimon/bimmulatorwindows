@@ -188,6 +188,7 @@ def main() -> int:
                 else None
             ),
             "bench_input_overlay": env.get("IDRIVE_HMI_BENCH_INPUT") == "1",
+            "v850_car_data_link": env.get("IDRIVE_V850_LINK") == "1",
             "initial_resource_language": "en-US" if env.get("IDRIVE_HMI_RESOURCE_EN_US") == "1" else None,
         },
         "host": {"platform": sys.platform, "python": sys.version.split()[0], "nix": command_output(["nix", "--version"])},

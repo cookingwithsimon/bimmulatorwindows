@@ -53,6 +53,21 @@ class LaunchConfigTests(unittest.TestCase):
             command, _ = head_unit_command(Path("/project"), config, Path("/firmware"))
             self.assertIn(f"IDRIVE_HMI_CODING_REMOTE_HMI={int(enabled)}", command)
 
+    def test_car_data_defaults_to_off_and_must_be_boolean(self):
+        self.assertIs(self.config()["carData"], False)
+        self.assertIs(self.config(carData=True)["carData"], True)
+        for value in (1, "yes", None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "carData must be"):
+                self.config(carData=value)
+
+    def test_car_data_selects_the_v850_link(self):
+        head_unit_command = LAUNCHER["head_unit_command"]
+        for enabled in (False, True):
+            config = {"cacheDir": "/cache", "cpuCount": 2, "display": DISPLAYS[0],
+                      "pluginApps": False, "carData": enabled}
+            command, _ = head_unit_command(Path("/project"), config, Path("/firmware"))
+            self.assertIn(f"IDRIVE_V850_LINK={int(enabled)}", command)
+
     def test_display_defaults_to_the_host_window_backend(self):
         expected = "cocoa" if sys.platform == "darwin" else "sdl"
         self.assertEqual(DISPLAYS[0], expected)

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,7 @@ PACKAGES = {
     "swfl_00002720.bin.007_030_001": "a9222a2432f5318f06aec563321832a3ba41fde60a4692cbb0cf34317b2f37e1",
 }
 MODULES = ("head-unit", "6wb")
-EXPECTED = {"psdzdata", "cacheDir", "display", "cpuCount", "modules", "pluginApps"}
+EXPECTED = {"psdzdata", "cacheDir", "display", "cpuCount", "modules", "pluginApps", "carData"}
 # QEMU window backends per host. The first entry is the default; macOS uses
 # Cocoa for the head unit, Linux (including WSL2 with WSLg) uses SDL or GTK.
 DISPLAYS = ("cocoa", "none") if sys.platform == "darwin" else ("sdl", "gtk", "none")
@@ -79,6 +80,9 @@ def checked_config(project: Path, file: Path, nix: str) -> dict:
     config.setdefault("pluginApps", False)
     if type(config["pluginApps"]) is not bool:
         raise ValueError("pluginApps must be true or false.")
+    config.setdefault("carData", False)
+    if type(config["carData"]) is not bool:
+        raise ValueError("carData must be true or false.")
     cache = config.get("cacheDir")
     if cache is None:
         cache = os.environ.get("XDG_CACHE_HOME")
@@ -252,7 +256,8 @@ def head_unit_command(project, config, firmware):
     command = [sys.executable, str(project / "tools/run-hmi-profile.py"), str(profile),
                "--set", f"IDRIVE_QEMU_CPUS={config['cpuCount']}",
                "--set", f"IDRIVE_TCG_THREAD={environment['IDRIVE_TCG_THREAD']}",
-               "--set", f"IDRIVE_HMI_CODING_REMOTE_HMI={int(config['pluginApps'])}"]
+               "--set", f"IDRIVE_HMI_CODING_REMOTE_HMI={int(config['pluginApps'])}",
+               "--set", f"IDRIVE_V850_LINK={int(config.get('carData', False))}"]
     return command, environment
 
 
@@ -303,11 +308,19 @@ def run_kombi_session(project, cache, config, images, head_unit):
                 raise RuntimeError(f"6WB failed to start; see {run / 'qemu.log'}")
             time.sleep(0.05)
 
-        simulator = start([sys.executable, str(project / "tools/kombi-sim.py"), "--port", "0",
+        simulator_port = 0
+        if head_unit and config["carData"]:
+            # One set of controls: the head unit's virtual V850 follows this simulator.
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                simulator_port = probe.getsockname()[1]
+        simulator = start([sys.executable, str(project / "tools/kombi-sim.py"), "--port", str(simulator_port),
                            "--vehicle-ram", str(ram)])
         processes = {"6WB": kombi, "vehicle simulator": simulator}
         if head_unit:
             command, env = head_unit
+            if config["carData"]:
+                command = command + ["--set", f"IDRIVE_V850_FOLLOW=http://127.0.0.1:{simulator_port}"]
             processes["head unit"] = start(command, env)
         while True:
             for module, process in processes.items():

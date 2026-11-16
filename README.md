@@ -50,7 +50,10 @@ The optional settings are `cacheDir`, `display` (`cocoa` or `none` on macOS;
 (`true` or `false`, default `false`). `pluginApps = true` codes `REMOTE_HMI`
 active in the emulated head unit's coding defaults; without one of the
 remoting features coded, the HMI skips its remoting bundle and never loads
-plugin apps from `/opt/hmi/ID5/data/ro/Plugins`. Keep PSdZData and the cache outside the repository;
+plugin apps from `/opt/hmi/ID5/data/ro/Plugins`. `carData = true` (default
+`false`) starts the experimental virtual V850 described in
+[Car data for the head unit](#car-data-for-the-head-unit-experimental).
+Keep PSdZData and the cache outside the repository;
 the launcher rejects paths inside the checkout so local firmware and cache
 files never enter the Nix source or store. Both paths may contain spaces.
 The launcher reads `./idrive6.toml` by default; pass `--config /path/to/file`
@@ -179,6 +182,41 @@ nix develop -c python3 -m unittest discover -s tests -v
 The firmware staging diagnostics use the same verified input as the launcher;
 `nix run .#idrive6 -- --prepare-only` checks and stages it without starting
 QEMU. The device tests use QEMU directly and need no firmware or GUI.
+
+## Car data for the head unit (experimental)
+
+On the car, the head unit's V850 power and bus controller reaches the OMAP
+through io-ipc and registers the car's MOST function blocks with the stock
+`most` daemon. That is how speed, gear, ignition, range and the trip computer
+reach the HMI. The emulator has no V850, so the HMI normally sees none of it.
+
+`carData = true` in `idrive6.toml` (`IDRIVE_V850_LINK=1`) adds one:
+
+- `tools/qnx-v850-transport.c` is an io-ipc transport, built at launch,
+  that replaces the SPI transport and carries io-ipc messages over OMAP
+  UART2 (QEMU `serial2`). io-ipc, its decoder and every client stay stock.
+- The staged `starter.cfg` points io-ipc at a copy of its config with only
+  the `tchannel=` line changed, and runs `most` as the local MOST master
+  with `V850_MOSTSUBNET_OMAP_DIRECT_REGISTRATION=1` and its own heartbeat
+  off. Nothing in the firmware cache is changed.
+- `tools/v850-sim.py` plays the V850 on the host: it grants io-ipc flow
+  control, counts watchdog heartbeats, registers the Kombi (`0xE0`),
+  Vehicle (`0x05`) and power (`0xD1`) blocks on channel 25 and answers the
+  HMI's subscriptions from the vehicle state. Properties it cannot build
+  get the neutral Status in `tools/v850-most-defaults.json`.
+
+With the 6WB module running, the head unit follows the 6WB simulator, so
+one set of controls drives the cluster, the HUD and iDrive. Without it, the
+V850 has its own state: `POST http://127.0.0.1:8770/api/v1/vehicle` with the
+same fields as the 6WB simulator. `GET /api/v1/v850` shows the link, the
+watchdog count, every subscription the HMI made and what it wrote to our
+blocks. The V850 log is `v850.log` in the run directory.
+
+This is a port of IDEmu's virtual V850 (PolyForm Noncommercial, see
+[Third-party notices](THIRD_PARTY_NOTICES.md)). IDEmu measured the MOST
+layouts on HMI `007_051_002`; this profile runs `007_030_001`, so each
+layout is unconfirmed until the HMI is seen to accept it. It cannot be
+combined with `IDRIVE_MOST_SIPC_HOST_PORT` or `IDRIVE_CAPTURE_OMAP_UARTS`.
 
 ## Experimental 6WB cluster and HUD
 
